@@ -16,7 +16,7 @@ LOCAL_DB_PORT="5432"
 # --- Remote server config ---
 REMOTE_USER="root"                        # or "deploy"
 REMOTE_HOST="209.38.0.37"
-REMOTE_ENV="/var/www/boutique_match/.env_prd"
+REMOTE_ENV="/var/www/boutique_match_stg/.env_stg"
 REMOTE_PATH="/tmp/boutique_match.dump"
 
 # === Step 1: Dump local DB (custom format, no owners/ACLs) ===
