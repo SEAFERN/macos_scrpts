@@ -1,0 +1,2 @@
+MY_IP=$(curl -s https://ipinfo.io/ip) && \
+ssh deploy@209.38.0.37 "sudo sed -i.bak '/hostssl\s\+boutique_match_stg\s\+boutique_match_user\s\+[0-9.]\+\/32/d' /etc/postgresql/17/main/pg_hba.conf && echo 'hostssl   boutique_match_stg   boutique_match_user   $MY_IP/32   scram-sha-256' | sudo tee -a /etc/postgresql/17/main/pg_hba.conf && sudo systemctl restart postgresql && echo '✅ Added pg_hba entry for $MY_IP'"
