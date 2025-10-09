@@ -3,7 +3,7 @@ set -e
 set -o pipefail
 
 # ======================================================
-# Backup local DB -> Restore to Remote Staging DB (v7)
+# Backup local DB -> Restore to Remote Staging DB (v8)
 # ======================================================
 # Usage:
 #   ./bm_03_copy_db_to_remote_stg.sh
@@ -45,20 +45,20 @@ set +a
 
 export PGPASSWORD="$DB_PASSWORD"
 REMOTE_PATH="/tmp/boutique_match.dump"
-DBROLE="$DB_USER"   # dynamic role detection
-
-# --- Logging directory ---
+DBROLE="$DB_USER"
 LOG_DIR="/var/log/boutique_match_stg"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 chmod 777 "$LOG_DIR" || true
 LOG_FILE="$LOG_DIR/restore_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo ">>> [0] Starting staging DB restore for $DB_NAME ($DB_USER @ $DB_HOST:$DB_PORT)"
+echo ">>> ==================================================="
+echo ">>> Starting STAGING restore for: $DB_NAME ($DB_USER @ $DB_HOST:$DB_PORT)"
 echo ">>> Logging to: $LOG_FILE"
+echo ">>> ==================================================="
 
 echo ">>> [1] Stopping Gunicorn service..."
-systemctl stop boutique_match_stg_gunicorn.service || true
+systemctl stop $REMOTE_SERVICE || true
 
 echo ">>> [2] Terminating active DB sessions..."
 sudo -u postgres psql -c "
@@ -81,15 +81,16 @@ pg_restore --clean --if-exists --no-owner --no-acl \
 echo ">>> [6] Cleaning up dump..."
 rm -f "$REMOTE_PATH"
 
-echo ">>> [7] Resetting ownerships and privileges for ALL objects..."
+echo ">>> [7] Resetting ownerships and privileges..."
 sudo -u postgres psql -d "$DB_NAME" <<SQL
   ALTER SCHEMA public OWNER TO "$DBROLE";
+  GRANT ALL PRIVILEGES ON SCHEMA public TO "$DBROLE";
 
-  -- Fix ownership for all tables, sequences, and functions
   DO \$\$
   DECLARE obj RECORD;
   BEGIN
-    FOR obj IN SELECT 'TABLE', tablename FROM pg_tables WHERE schemaname='public' LOOP
+    -- Tables
+    FOR obj IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP
       BEGIN
         EXECUTE format('ALTER TABLE public.%I OWNER TO %I;', obj.tablename, '$DBROLE');
       EXCEPTION WHEN OTHERS THEN
@@ -97,7 +98,8 @@ sudo -u postgres psql -d "$DB_NAME" <<SQL
       END;
     END LOOP;
 
-    FOR obj IN SELECT 'SEQUENCE', sequencename FROM pg_sequences WHERE schemaname='public' LOOP
+    -- Sequences
+    FOR obj IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP
       BEGIN
         EXECUTE format('ALTER SEQUENCE public.%I OWNER TO %I;', obj.sequencename, '$DBROLE');
       EXCEPTION WHEN OTHERS THEN
@@ -105,7 +107,8 @@ sudo -u postgres psql -d "$DB_NAME" <<SQL
       END;
     END LOOP;
 
-    FOR obj IN SELECT 'FUNCTION', routine_name FROM information_schema.routines WHERE routine_schema='public' LOOP
+    -- Functions
+    FOR obj IN SELECT routine_name FROM information_schema.routines WHERE routine_schema='public' LOOP
       BEGIN
         EXECUTE format('ALTER FUNCTION public.%I() OWNER TO %I;', obj.routine_name, '$DBROLE');
       EXCEPTION WHEN OTHERS THEN
@@ -115,26 +118,21 @@ sudo -u postgres psql -d "$DB_NAME" <<SQL
   END
   \$\$;
 
-  -- Blanket privileges (covers django_session & others)
   GRANT USAGE ON SCHEMA public TO "$DBROLE";
   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "$DBROLE";
   GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "$DBROLE";
   GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO "$DBROLE";
 
-  -- Default privileges for future migrations
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "$DBROLE";
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "$DBROLE";
   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO "$DBROLE";
 
-  -- Re-check and auto-fix any non-matching ownerships (last safety pass)
   DO \$\$
   DECLARE t RECORD;
   BEGIN
     FOR t IN
-      SELECT tablename
-      FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tableowner <> '$DBROLE'
+      SELECT tablename FROM pg_tables
+      WHERE schemaname='public' AND tableowner <> '$DBROLE'
     LOOP
       RAISE NOTICE 'Fixing lingering table: %', t.tablename;
       EXECUTE format('ALTER TABLE public.%I OWNER TO %I;', t.tablename, '$DBROLE');
@@ -144,14 +142,22 @@ sudo -u postgres psql -d "$DB_NAME" <<SQL
 SQL
 
 echo ">>> [8] Restarting Gunicorn service..."
-systemctl start boutique_match_stg_gunicorn.service
+systemctl start $REMOTE_SERVICE || true
 
 echo ">>> ✅ Restore complete — verified all objects owned by $DBROLE"
 echo ">>> Log file saved at: $LOG_FILE"
+echo ">>> ==================================================="
+echo ">>> Restore Summary:"
+echo ">>>   Database: $DB_NAME"
+echo ">>>   Owner:    $DBROLE"
+echo ">>>   Host:     $DB_HOST"
+echo ">>>   Port:     $DB_PORT"
+echo ">>> ==================================================="
 EOSCRIPT
 
 echo "=== [4] Copying and executing remote restore script ==="
 scp /tmp/boutique_match_restore_stg.sh $REMOTE_USER@$REMOTE_HOST:$REMOTE_SCRIPT
 ssh $REMOTE_USER@$REMOTE_HOST "bash $REMOTE_SCRIPT && rm -f $REMOTE_SCRIPT"
 
+echo
 echo "=== ✅ Database copied, normalized, and verified on staging ($REMOTE_HOST) ==="
