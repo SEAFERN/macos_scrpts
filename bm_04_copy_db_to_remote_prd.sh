@@ -18,7 +18,7 @@ REMOTE_USER="root"
 REMOTE_HOST="209.38.0.37"
 REMOTE_ENV="/var/www/boutique_match/.env_prd"
 REMOTE_PATH="/tmp/boutique_match.dump"
-REMOTE_SERVICE="mywitness_gunicorn.service"   # ⚠️ Replace with the correct PRD Gunicorn service name
+REMOTE_SERVICE="boutique_match_gunicorn.service"   # ✅ Corrected Gunicorn service name
 
 # === Step 1: Dump local DB ===
 echo "=== Dumping local database as $LOCAL_DB_USER ==="
@@ -64,6 +64,17 @@ ssh $REMOTE_USER@$REMOTE_HOST bash <<EOF
 
   echo "Cleaning up dump..."
   rm -f "$REMOTE_PATH"
+
+  echo "Normalizing ownership and privileges..."
+  sudo -u postgres PGPASSWORD="\$DB_PASSWORD" psql -d "\$DB_NAME" <<'SQL'
+ALTER SCHEMA public OWNER TO boutique_match_user;
+
+GRANT USAGE ON SCHEMA public TO boutique_match_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO boutique_match_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO boutique_match_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO boutique_match_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO boutique_match_user;
+SQL
 
   echo "Restarting Gunicorn service..."
   systemctl start $REMOTE_SERVICE
