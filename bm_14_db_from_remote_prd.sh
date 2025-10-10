@@ -21,13 +21,13 @@ LOCAL_DB_PORT="5432"
 
 # === Step 1: Dump production DB remotely ===
 echo "=== [1] Dumping production DB on remote ==="
-ssh $REMOTE_USER@$REMOTE_HOST bash <<'EOF'
+ssh $REMOTE_USER@$REMOTE_HOST bash <<EOF
   set -e
   set -a
-  source /var/www/boutique_match/.env_prd
+  source $REMOTE_ENV
   set +a
 
-  export PGPASSWORD="$DB_PASSWORD"
+  export PGPASSWORD="\$DB_PASSWORD"
   echo "Creating dump of production database: \$DB_NAME"
   pg_dump -U "\$DB_USER" -h "\$DB_HOST" -p "\$DB_PORT" \
     -Fc --no-owner --no-acl "\$DB_NAME" > "$REMOTE_PATH"
